@@ -1,6 +1,8 @@
+import type { Api, Model } from "@mariozechner/pi-ai"
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@mariozechner/pi-coding-agent"
 import { isKeyRelease, matchesKey } from "@mariozechner/pi-tui"
 import { RST_FG, resolvedSemanticFg } from "../../ansi.js"
+import { resolveClassifierModel } from "./classifier-model.js"
 import { classifyToolCall } from "./classifier.js"
 import { registerCommands } from "./commands.js"
 import { type LoadedConfig, loadConfig } from "./config.js"
@@ -312,10 +314,15 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 					if (isReadOnlyBashCommand(command)) return undefined
 				}
 
+				const classifierModel = resolveClassifierModel(ctx.model, ctx.modelRegistry)
+				if (!classifierModel) return { block: true, reason: "no model available for classifier" }
+
 				const verdict = await classifyToolCall(
-					ctx,
+					classifierModel,
+					ctx.modelRegistry,
 					{ toolName, input, cwd: ctx.cwd },
 					{ timeoutMs: loaded.config.classifierTimeoutMs },
+					ctx.signal,
 				)
 
 				if (verdict.verdict === "safe") return undefined
