@@ -2,6 +2,8 @@
  * agent-runner.ts — Core execution engine: creates sessions, runs agents, collects results.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import type { Api, Model } from "@earendil-works/pi-ai"
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import {
@@ -14,6 +16,9 @@ import {
 	createAgentSession,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent"
+import { getAvailableModels } from "../../../startup-context.js"
+import { buildPhaseGuidelinesSection } from "../../orchestration/model-registry/guidelines/guidelines-resolver.js"
+import { ModelRegistry } from "../../orchestration/model-registry/index.js"
 import { getCurrentPhase, setCurrentPhase } from "../../tags.js"
 import { detectEnv } from "../env.js"
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "../memory/memory.js"
@@ -95,6 +100,13 @@ function resolveDefaultModel(
 	}
 
 	return parentModel
+}
+
+let cachedGuidelinesRegistry: ModelRegistry | undefined
+
+function getGuidelinesRegistry(): ModelRegistry {
+	cachedGuidelinesRegistry ??= new ModelRegistry(getAvailableModels())
+	return cachedGuidelinesRegistry
 }
 
 /** Info about a tool event in the subagent. */
@@ -216,6 +228,10 @@ export async function runAgent(
 		}
 	}
 
+	const modelId = (options.model as { id?: string } | undefined)?.id
+	const guidelinesBlock = buildPhaseGuidelinesSection(modelId, getCurrentPhase(), getGuidelinesRegistry())
+	if (guidelinesBlock) extras.guidelinesBlock = guidelinesBlock
+
 	let systemPrompt: string
 	if (agentConfig) {
 		systemPrompt = buildAgentPrompt(agentConfig, effectiveCwd, env, parentSystemPrompt, extras)
@@ -223,6 +239,18 @@ export async function runAgent(
 		const fallback = DEFAULT_AGENTS.get(AGENT_GENERAL_PURPOSE)
 		if (!fallback) throw new Error(`No fallback config available for unknown type "${type}"`)
 		systemPrompt = buildAgentPrompt({ ...fallback, name: type }, effectiveCwd, env, parentSystemPrompt, extras)
+	}
+
+	const debugSession = process.env.KIMCHI_DEBUG_SESSION
+	if (debugSession) {
+		try {
+			const debugDir = join(effectiveCwd, ".kimchi", "debug", debugSession)
+			mkdirSync(debugDir, { recursive: true })
+			const agentLabel = agentConfig?.name ?? type
+			writeFileSync(join(debugDir, `agent-${agentLabel}-${Date.now()}.md`), systemPrompt)
+		} catch {
+			// best-effort debug logging
+		}
 	}
 
 	const noSkills = skills === false || Array.isArray(skills)
