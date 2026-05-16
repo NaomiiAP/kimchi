@@ -8,12 +8,13 @@
  * All mode-specific content lives in orchestration-instructions.ts.
  */
 
-import { type Skill, formatSkillsForPrompt } from "@earendil-works/pi-coding-agent"
+import { type ExtensionAPI, type Skill, formatSkillsForPrompt } from "@earendil-works/pi-coding-agent"
 import { buildPhaseGuidelinesSection } from "../orchestration/model-registry/guidelines/guidelines-resolver.js"
 import type { ModelRegistry } from "../orchestration/model-registry/index.js"
 import type { Phase } from "../orchestration/model-registry/types.js"
 import { resolveOrchestrationInstructions } from "../orchestration/orchestration-instructions.js"
 import type { ContextFile } from "./context-files.js"
+import { type SuppressibleSection, renderSystemPromptBlocks } from "./system-prompt-blocks.js"
 
 export interface EnvironmentInfo {
 	os: string
@@ -36,6 +37,7 @@ export interface ToolInfo {
 export type PromptMode = "orchestrator" | "subagent" | "single"
 
 export interface SystemPromptBuildOptions {
+	pi?: ExtensionAPI
 	tools: readonly ToolInfo[]
 	env: EnvironmentInfo
 	contextFiles?: readonly ContextFile[]
@@ -49,7 +51,7 @@ export interface SystemPromptBuildOptions {
 const SUBAGENT_TOOL_NAME = "subagent"
 
 export function buildSystemPrompt(options: SystemPromptBuildOptions): string {
-	const { tools, env, contextFiles, skills, currentModelId, currentPhase, registry, mode } = options
+	const { pi, tools, env, contextFiles, skills, currentModelId, currentPhase, registry, mode } = options
 
 	const effectiveTools = mode === "subagent" ? tools.filter((t) => t.name !== SUBAGENT_TOOL_NAME) : tools
 
@@ -67,6 +69,11 @@ export function buildSystemPrompt(options: SystemPromptBuildOptions): string {
 	})
 
 	const phaseSection = buildPhaseGuidelinesSection(currentModelId, currentPhase, registry)
+	const blocks = pi ? renderSystemPromptBlocks(pi, { mode }) : []
+	const suppressed = new Set<SuppressibleSection>()
+	for (const block of blocks) {
+		for (const section of block.suppress) suppressed.add(section)
+	}
 
 	return buildPrompt({
 		mode,
@@ -76,6 +83,8 @@ export function buildSystemPrompt(options: SystemPromptBuildOptions): string {
 		skillsSection,
 		orchestrationSection,
 		phaseSection,
+		systemPromptBlocks: blocks.map((block) => block.content).join("\n\n"),
+		suppressed,
 	})
 }
 
@@ -91,6 +100,8 @@ interface PromptParts {
 	skillsSection: string
 	orchestrationSection: string
 	phaseSection: string
+	systemPromptBlocks: string
+	suppressed: ReadonlySet<SuppressibleSection>
 }
 
 const BASE_INSTRUCTIONS =
@@ -109,19 +120,10 @@ const CORE_GUIDELINES = `- Be concise in your responses. Do not restate what you
 - After every tool result, ALWAYS produce text — either the next tool call with explicit reasoning, or a final summary. Never re-issue the same tool call after a successful result.
 - Never emit tool calls with empty names, blank IDs, or malformed arguments. If a tool call fails to advance the task after 3 attempts, stop calling tools, summarize what is not working, and reassess in plain text before continuing.`
 
-const PHASE_TAGGING = `
-You must call \`set_phase\` before every block of work. Never take an action without the correct phase being set first. Use one of \`explore\`, \`research\`, \`plan\`, \`build\`, or \`review\` strictly matching current work type.
-The session starts in \`explore\` phase by default. Call \`set_phase\` immediately when your work type changes. Only one phase is active at a time — the most recent call wins.`
-
 const FACTUAL_ACCURACY = `
 - Never guess, assume, or fabricate information. Every claim you make must be backed by data you concretely obtained during this session. Do NOT escalate to escalation for minor issues or blame the user for poor request phrasing.
 - "I don't know" is a valid answer. When requirements, specifications, or factual details are not available through your tools or the user's messages, state that clearly and ask the user to provide them. Do not fill the gap with plausible-sounding content.
 - Distinguish what you found from what you assume. If you must reason about something uncertain, label it explicitly as an assumption and ask the user to confirm before acting on it.`
-
-const TOOL_DISCOVERY = `
-- Before resorting to web search, web fetch, or giving up on accessing external data, check your Available Tools list for a more direct way to get the information. MCP (Model Context Protocol) integrations often provide authenticated access to services like Jira, Confluence, GitHub, GitLab, and others that are inaccessible via unauthenticated web requests.
-- If you see an mcp tool in your tool list, use mcp({ search: "query" }) to discover what MCP servers and tools are available before assuming you have no way to access a service.
-- Prefer MCP tools over web_fetch for any service that requires authentication (Jira, Confluence, internal wikis, etc.). MCP tools already have credentials configured.`
 
 function buildPrompt(parts: PromptParts): string {
 	const sections: string[] = []
@@ -132,24 +134,26 @@ function buildPrompt(parts: PromptParts): string {
 	sections.push(`## Documents\n\n${DOCUMENTS_SECTION}`)
 	sections.push(`## Guidelines\n\n${CORE_GUIDELINES}`)
 	sections.push(`## Factual Accuracy\n\n${FACTUAL_ACCURACY}`)
-	sections.push(`## Phase Tagging for Analytics\n\n${PHASE_TAGGING}`)
-	sections.push(`## Tool and MCP Discovery\n\n${TOOL_DISCOVERY}`)
 
-	if (parts.orchestrationSection) {
+	if (!parts.suppressed.has("orchestration") && parts.orchestrationSection) {
 		sections.push(parts.orchestrationSection)
 	}
 
-	if (parts.phaseSection) {
+	if (!parts.suppressed.has("phase-guidelines") && parts.phaseSection) {
 		sections.push(parts.phaseSection)
 	}
 
-	if (parts.projectContext) {
+	if (!parts.suppressed.has("project-context") && parts.projectContext) {
 		sections.push(parts.projectContext)
+	}
+
+	if (parts.systemPromptBlocks) {
+		sections.push(parts.systemPromptBlocks)
 	}
 
 	sections.push(parts.toolsSection)
 
-	if (parts.skillsSection) {
+	if (!parts.suppressed.has("skills") && parts.skillsSection) {
 		sections.push(parts.skillsSection)
 	}
 
