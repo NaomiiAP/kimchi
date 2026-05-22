@@ -20,8 +20,14 @@ import { setTipWidgetLocation } from "../tips/index.js"
 export type PromptUi = {
 	select?: (title: string, options: string[]) => Promise<string | undefined>
 	input?: (title: string, placeholder?: string) => Promise<string | undefined>
+	editor?: (title: string, prefill?: string) => Promise<string | undefined>
 	custom?: ExtensionUIContext["custom"]
 	setWorkingVisible?: (visible: boolean) => void
+}
+
+export interface PromptEditorOptions {
+	placeholder?: string
+	prefill?: string
 }
 
 export interface PromptChoiceOption {
@@ -91,6 +97,26 @@ export function promptInput(ctx: unknown, title: string, placeholder?: string): 
 	const ui = getPromptUi(ctx)
 	if (!ui?.input) return Promise.resolve(undefined)
 	return withWorkingHidden(ui, () => ui.input?.(title, placeholder) ?? Promise.resolve(undefined))
+}
+
+export function promptEditor(
+	ctx: unknown,
+	title: string,
+	options: PromptEditorOptions = {},
+): Promise<string | undefined> {
+	const ui = getPromptUi(ctx)
+	if (!ui) return Promise.resolve(undefined)
+	if (ui.editor) {
+		const editorTitle = options.placeholder ? `${title}\n${options.placeholder}` : title
+		return withWorkingHidden(ui, () => ui.editor?.(editorTitle, options.prefill ?? "") ?? Promise.resolve(undefined))
+	}
+	if (ui.input) {
+		return withWorkingHidden(
+			ui,
+			() => ui.input?.(title, options.prefill ?? options.placeholder) ?? Promise.resolve(undefined),
+		)
+	}
+	return Promise.resolve(undefined)
 }
 
 export async function promptForm(ctx: unknown, spec: PromptFormSpec): Promise<PromptFormResult | undefined> {
