@@ -18,9 +18,11 @@ import { formatFermentFooterDisplay } from "./ferment/footer-status.js"
 import { getActiveFerment, getFermentContinuationPolicy } from "./ferment/index.js"
 import { formatDuration } from "./format.js"
 import { sessionHasImages } from "./model-guard.js"
+import { splitModelRef } from "./orchestration/model-roles.js"
 import {
-	ORCHESTRATOR_MODEL_ID,
 	getMultiModelEnabled,
+	getOrchestratorModelId,
+	getOrchestratorModelRef,
 	setMultiModelEnabled,
 } from "./prompt-construction/prompt-enrichment.js"
 import {
@@ -272,7 +274,7 @@ export default function uiExtension(pi: ExtensionAPI) {
 				if (ferment) parts.push(ferment.text)
 				const perm = footerData.getExtensionStatuses().get("permissions-mode")
 				if (perm) parts.push(perm)
-				const modelId = getMultiModelEnabled() ? `multi-model (${ORCHESTRATOR_MODEL_ID})` : (ctx.model?.id ?? "n/a")
+				const modelId = getMultiModelEnabled() ? `multi-model (${getOrchestratorModelId()})` : (ctx.model?.id ?? "n/a")
 				parts.push(`${resolvedAccentFg(theme)}${modelId}${RST_FG} ${theme.fg("dim", "→ ctrl+p")}`)
 				return parts.join(` ${theme.fg("dim", "·")} `)
 			}
@@ -427,7 +429,11 @@ export default function uiExtension(pi: ExtensionAPI) {
 							? allAvailable.filter((m) => enabledIds.has(`${m.provider}/${m.id}`))
 							: allAvailable
 						const current = ctx.model
-						const orchestratorModel = ctx.modelRegistry.find("kimchi-dev", ORCHESTRATOR_MODEL_ID)
+						const orchRef = getOrchestratorModelRef()
+						const orchParsed = splitModelRef(orchRef)
+						const orchestratorModel = orchParsed
+							? ctx.modelRegistry.find(orchParsed.provider, orchParsed.modelId)
+							: undefined
 
 						// Cycle order: model[0] → ... → model[last] → multi-model → model[0]
 						// kimi-k2.6 appears as a regular model AND multi-model appears
