@@ -164,6 +164,11 @@ export interface StartInteractiveFermentDeps {
 	runtime?: FermentRuntime
 }
 
+async function waitForHeadlessCommandTurn(ctx: FermentUiContext & ExtensionCommandContext): Promise<void> {
+	if (ctx.hasUI) return
+	await ctx.waitForIdle()
+}
+
 export async function startInteractiveFerment({
 	pi,
 	ctx,
@@ -891,6 +896,7 @@ export class FermentCommandController {
 					},
 					{ triggerTurn: true },
 				)
+				await waitForHeadlessCommandTurn(ctx)
 			} catch (err) {
 				ctx.ui.notify(err instanceof FermentError ? err.message : "One-shot create failed.")
 			} finally {
@@ -943,6 +949,7 @@ export class FermentCommandController {
 			)
 
 			await runScopingFlow(f, pi, ctx, runtime, scopingIntent)
+			await waitForHeadlessCommandTurn(ctx)
 		} catch (err) {
 			ctx.ui.notify(err instanceof FermentError ? err.message : "Create failed.")
 		} finally {
