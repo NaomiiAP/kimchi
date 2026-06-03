@@ -51,6 +51,14 @@ export const STATIC_RESOURCE_DEFINITIONS: readonly ResourceDefinition[] = [
 		restartRequired: true,
 	},
 	{
+		id: "extensions.claude-code-hook-adapter",
+		kind: "extensions",
+		label: "Claude Code hook adapter",
+		description: "Run Claude Code command hooks from .claude settings files.",
+		defaultEnabled: false,
+		restartRequired: true,
+	},
+	{
 		id: PI_PACKAGE_LOOKUP_RESOURCE_ID,
 		kind: "extensions",
 		label: "Pi package lookup",
