@@ -13,6 +13,7 @@ import { PromptEditor } from "../components/editor.js"
 import { ScriptFooter, StatsFooter, buildScriptPayload, readStatusLineCommand } from "../components/footer.js"
 import { LogoHeader } from "../components/logo.js"
 import { collapseAll, expandNext, resetState } from "../expand-state.js"
+import { getGitBranch, refreshGitBranch } from "../utils.js"
 import { isBareExitAlias } from "./exit-utils.js"
 import { formatFermentFooterDisplay } from "./ferment/footer-status.js"
 import { getActiveFerment, getFermentContinuationPolicy } from "./ferment/index.js"
@@ -33,6 +34,7 @@ import {
 import { isRawInputCaptureActive } from "./shared-input.js"
 import { createWorkingAnimator } from "./spinner.js"
 import { getKittyKeyboardSupport } from "./terminal-compat/keyboard-capability.js"
+import { createBranchPoller } from "./ui-branch-poll.js"
 
 export { requestSharedFooterRender, setSessionModeOnboardingFooterSuppressed } from "./shared-footer.js"
 
@@ -129,6 +131,10 @@ function getEnabledModelIds(): Set<string> | null {
 let currentEditor: PromptEditor | undefined
 let pasteImageHandler: (() => void) | undefined
 let currentSessionIndicatorText: string | null = null
+
+const branchPoller = createBranchPoller({
+	refreshBranch: (cb) => refreshGitBranch(cb),
+})
 
 type DisposableComponent = Component & { dispose?(): void }
 
@@ -270,7 +276,16 @@ export default function uiExtension(pi: ExtensionAPI) {
 		scriptGeneration++
 		scriptPending = false
 
-		ctx.ui.setHeader((_tui, theme) => new LogoHeader(theme))
+		ctx.ui.setHeader((tui, theme) => {
+			branchPoller.start(() => tui.requestRender())
+			const logo = new LogoHeader(theme, { getBranch: () => branchPoller.getBranch() })
+			const header: DisposableComponent = {
+				render: (w) => logo.render(w),
+				invalidate: () => logo.invalidate(),
+				dispose: () => branchPoller.stop(),
+			}
+			return header
+		})
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			uiTui = tui
 			const cmd = readStatusLineCommand()
@@ -551,6 +566,7 @@ export default function uiExtension(pi: ExtensionAPI) {
 		stopWorkingAnimation?.()
 		stopWorkingAnimation = undefined
 		currentCtx = null
+		branchPoller.stop()
 	})
 
 	pi.on("input", (event, ctx) => {
